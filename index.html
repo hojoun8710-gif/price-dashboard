@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.github.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>원자재 가격 동향</title>
+  <meta name="description" content="알루미늄 LME·SMM 시세와 USD/CNY 환율 주간 동향, 구매 결정 기록">
+  <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="원자재">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <!-- 처음 한 번: 저장소와 토큰 입력 -->
+  <section id="setup" class="setup" hidden>
+    <div class="setup-card">
+      <h1>원자재 가격 동향</h1>
+      <p class="muted">데이터는 비공개 저장소에 있습니다. 이 기기에서 한 번만 연결하면 됩니다.</p>
+      <form id="setup-form" autocomplete="off">
+        <label><span>저장소 <span class="muted">(사용자/저장소)</span></span>
+          <input id="setup-repo" name="repo" required placeholder="예: 내아이디/저장소이름" spellcheck="false" autocapitalize="off">
+        </label>
+        <label>GitHub 토큰
+          <input id="setup-token" name="token" type="password" required placeholder="github_pat_…" spellcheck="false" autocapitalize="off">
+        </label>
+        <p id="setup-error" class="error" role="alert" hidden></p>
+        <button class="btn primary" type="submit">연결</button>
+      </form>
+      <details class="help">
+        <summary>토큰 만드는 법</summary>
+        <ol>
+          <li>GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token</li>
+          <li>Repository access: <b>Only select repositories</b> → 비공개 데이터 저장소 하나만 선택</li>
+          <li>Permissions → Repository permissions → <b>Contents: Read and write</b> (구매 결정 저장에 필요)</li>
+          <li>만들어진 토큰을 위 칸에 붙여 넣기. 토큰은 이 기기에만 저장됩니다.</li>
+        </ol>
+      </details>
+    </div>
+  </section>
+
+  <div id="app" class="app" hidden>
+    <header class="top">
+      <div>
+        <h1 id="week-title">원자재 가격 동향</h1>
+        <p id="week-sub" class="muted"></p>
+      </div>
+      <button id="refresh" class="icon-btn" type="button" aria-label="새로고침">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </header>
+    <p id="banner" class="banner" role="status" hidden></p>
+
+    <main>
+      <!-- 시세 -->
+      <section id="view-market" class="view" aria-labelledby="tab-market">
+        <div id="cards" class="cards"></div>
+
+        <article class="card chart-card">
+          <div class="seg" role="tablist" aria-label="시리즈" id="series-tabs"></div>
+          <div class="chart-head">
+            <h2 id="chart-title"></h2>
+            <div class="seg small" role="group" aria-label="기간" id="range-tabs"></div>
+          </div>
+          <div id="chart" class="chart"></div>
+          <p id="chart-foot" class="muted small-text"></p>
+        </article>
+
+        <article class="card">
+          <h2 id="table-title">주차별 평균</h2>
+          <div class="table-wrap"><table class="table" id="week-table"></table></div>
+        </article>
+      </section>
+
+      <!-- 구매 결정 -->
+      <section id="view-decisions" class="view" aria-labelledby="tab-decisions" hidden>
+        <div class="row-between">
+          <h2 class="section-title">구매 결정</h2>
+          <button id="new-decision" class="btn primary" type="button">+ 기록하기</button>
+        </div>
+        <p class="muted small-text">단가를 그 주의 시세(기준 지표)로 나눈 비율로 같은 품목의 과거 결정과 비교합니다. 비율이 낮을수록 같은 시세 조건에서 더 싸게 산 것입니다.</p>
+        <div id="decision-list"></div>
+      </section>
+
+      <!-- 실행 상태 -->
+      <section id="view-status" class="view" aria-labelledby="tab-status" hidden>
+        <h2 class="section-title">시세 수집 <span class="muted">(GitHub Actions)</span></h2>
+        <div id="collect-status"></div>
+        <h2 class="section-title">엑셀·메일 <span class="muted">(PC)</span></h2>
+        <div id="pc-status"></div>
+        <h2 class="section-title">이 기기</h2>
+        <article class="card">
+          <p class="small-text">저장소: <b id="conn-repo"></b></p>
+          <p class="small-text muted" id="conn-info"></p>
+          <button id="disconnect" class="btn" type="button">연결 해제 (토큰 지우기)</button>
+        </article>
+      </section>
+    </main>
+
+    <nav class="tabbar" role="tablist" aria-label="화면">
+      <button role="tab" id="tab-market" data-view="market" aria-selected="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-6 4 4 8-9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>시세</span>
+      </button>
+      <button role="tab" id="tab-decisions" data-view="decisions" aria-selected="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>구매 결정</span>
+      </button>
+      <button role="tab" id="tab-status" data-view="status" aria-selected="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v4l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>실행 상태</span>
+        <i id="status-dot" class="tab-dot" hidden></i>
+      </button>
+    </nav>
+  </div>
+
+  <!-- 결정 입력 -->
+  <dialog id="decision-dialog" class="sheet">
+    <form id="decision-form" method="dialog" autocomplete="off">
+      <header class="sheet-head">
+        <h2 id="decision-form-title">구매 결정 기록</h2>
+        <button type="button" class="icon-btn" id="decision-cancel" aria-label="닫기">✕</button>
+      </header>
+      <div class="sheet-body">
+        <div class="grid2">
+          <label>날짜<input type="date" name="date" required></label>
+          <label>결정
+            <select name="kind" required>
+              <option value="발주">발주 (구매)</option>
+              <option value="견적">견적·협상 (미확정)</option>
+              <option value="보류">보류</option>
+            </select>
+          </label>
+        </div>
+        <label>품목<input name="item" list="item-list" required placeholder="예: 퓨어 라이트 프라이팬 28cm"></label>
+        <datalist id="item-list"></datalist>
+        <label><span>공급사 <span class="muted">(선택)</span></span><input name="supplier" list="supplier-list"></label>
+        <datalist id="supplier-list"></datalist>
+        <div class="grid3">
+          <label>단가<input name="unit_price" type="number" inputmode="decimal" step="any" min="0" required></label>
+          <label>통화
+            <select name="currency"><option>USD</option><option>CNY</option><option>KRW</option></select>
+          </label>
+          <label>기준 지표
+            <select name="basis"><option value="SMM">SMM A00</option><option value="LME">LME CASH</option></select>
+          </label>
+        </div>
+        <div class="grid2">
+          <label>수량<input name="qty" type="number" inputmode="decimal" step="any" min="0"></label>
+          <label>수량 단위
+            <select name="qty_unit"><option>개</option><option>세트</option><option>kg</option><option>톤</option></select>
+          </label>
+        </div>
+        <label>근거·메모<textarea name="memo" rows="3" placeholder="예: SMM 3주 연속 하락, 공급사 3% 인하 제안 수용"></textarea></label>
+
+        <div id="preview" class="preview" aria-live="polite"></div>
+        <p id="decision-error" class="error" role="alert" hidden></p>
+      </div>
+      <footer class="sheet-foot">
+        <button type="button" class="btn danger" id="decision-delete" hidden>삭제</button>
+        <span class="spacer"></span>
+        <button type="submit" class="btn primary" id="decision-save">저장</button>
+      </footer>
+    </form>
+  </dialog>
+</body>
+</html>
